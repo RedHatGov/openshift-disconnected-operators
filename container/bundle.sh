@@ -1,17 +1,20 @@
 #!/bin/bash -x
 
+BLOBS_ROOT=bundle/operators/docker/registry/v2/blobs/sha256/
 BUNDLE_DIR='bundle'
 BUNDLE_NAME='compliance-bundle.tar.gz'
 HOST_DIR='/host/'
 AUTH_TOKEN=$1
 AUTH_FILE='auth.json'
 
+unalias cp
+
 
 function __startRegistry() {
   podman container stop registry
   podman container rm registry
   mkdir -p operators
-  podman run -d --rm \
+  podman run -d \
   -p 5000:5000 \
   --name registry \
   -v ./operators:/var/lib/registry \
@@ -20,14 +23,14 @@ function __startRegistry() {
 
 function __stopRegistry() {
   podman container stop registry
-  podman container rm registry
+  podman containre rm registry
 }
 
 function __consolidate() {
 
   mkdir -p bundle
-  mv operators bundle/
-  mv publish bundle/
+  cp -rn operators bundle/
+  cp -rn publish bundle/
 
 }
 
@@ -56,6 +59,36 @@ function __mirror() {
     --icsp-scope=namespace
 }
 
+function __zeroBlobs() {
+  SAVE=$(ls bundle/operators/docker/registry/v2/repositories/custom-redhat-operator-index/_layers/sha256/)
+
+  for i in $(ls $BLOBS_ROOT)
+  do
+    for b in $(ls $BLOBS_ROOT/$i)
+    do
+      if grep -w -q $b <<< $SAVE
+      then
+        :
+      else
+        echo "Already in blundle" > $BLOBS_ROOT/$i/$b/data
+      fi
+    done
+  done
+}
+
+function __setCounter() {
+  if test -f bundle/.bundle-counter
+  then
+    c=$(cat bundle/.bundle-counter)
+    ((c=c+1))
+    echo "$c" > bundle/.bundle-counter
+    export $c
+  else
+    echo "1" > bundle/.bundle-counter
+    export c=1
+  fi
+}
+
 function bundle() {
 
 # Write Auth file
@@ -80,14 +113,19 @@ __mirror $AUTH_FILE
   # Consolidate
   __consolidate
 
+  # Set the differential counter
+  __setCounter
+
   # Compress
+  BUNDLE_NAME="operator-bundle-${c}.tar.gz"
   tar -czvf ${BUNDLE_NAME} ${BUNDLE_DIR}
 
   # Export
   mv ${BUNDLE_NAME} ${HOST_DIR}
-#else
-#  echo "Operator Mirror failed. Luckily this script was run in debug, so the cause should be easy to determine."
-#fi
+
+  # Zero the blobs
+  __zeroBlobs
+
 
 }
 
